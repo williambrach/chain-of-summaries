@@ -300,9 +300,6 @@ class LLMSProcessor:
             response = completion(model=model, messages=messages, **self.kwargs)
             response = response.choices[0].message.content
             qa_pairs = extract_qa_pairs(response, file_name=file_name)
-            # Add new questions to our set and new pairs to our results
-
-            # Add only unique questions to our results
             unique_pairs = []
             for pair in qa_pairs:
                 question = pair["question"]

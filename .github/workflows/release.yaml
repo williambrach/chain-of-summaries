@@ -96,6 +96,9 @@ jobs:
     name: Upload release to PyPI
     needs: [setup_and_build, details]
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/chain-of-summaries
     permissions:
       id-token: write
     steps:
@@ -107,3 +110,5 @@ jobs:
 
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
