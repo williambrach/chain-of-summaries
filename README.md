@@ -30,9 +30,6 @@ processor = LLMSProcessor(
     base_url="your_base_url"    # Optional base URL
 )
 
-# Load data from existing llms.txt file or URL
-data = load_llms_txt_file(content="https://llmstxt.org/llms.txt")
-
 # Or create new data for llms.txt
 sites = [
     {"url": "https://example.com", "content": "Example content", "title": "Example Site", "file_name": "example.txt"}
@@ -110,14 +107,6 @@ llms_txt_content = build_llms_txt_file(
     item_max_tokens=None,        # Maximum tokens per item (optional)
     description=True,            # Include descriptions (optional)
     output_file="llms.txt"       # Output file path (optional)
-)
-```
-
-### Loading llms.txt File
-
-```python
-data = load_llms_txt_file(
-    content="https://llmstxt.org/llms.txt"  # URL or content string
 )
 ```
 

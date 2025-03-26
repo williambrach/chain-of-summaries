@@ -4,15 +4,15 @@ from litellm import completion
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from src.metrics import (
+from src.chain_of_summaries.metrics import (
     calculate_bert_score,
     calculate_surprisal_score,
     check_answer_em,
     check_answer_f1,
     prepare_content,
 )
-from src.qna import QnA, extract_qa_pairs, synthetic_qa_prompt
-from src.summary import RefineSummary, Summarize, enc
+from src.chain_of_summaries.qna import QnA, extract_qa_pairs, synthetic_qa_prompt
+from src.chain_of_summaries.summary import RefineSummary, Summarize, enc
 
 
 def build_llms_txt_file(
