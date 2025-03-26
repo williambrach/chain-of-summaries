@@ -70,6 +70,11 @@ jobs:
     name: Setup uv and run build
     needs: [details, check_pypi]
     runs-on: "ubuntu-latest"
+    environment:
+      name: pypi
+      url: https://pypi.org/project/chain-of-summaries
+    permissions:
+      id-token: write
     steps:
         - uses: actions/checkout@v4
 
