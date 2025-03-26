@@ -1,6 +1,6 @@
 [project]
 name = "chain-of-summaries"
-version = "0.0.1"
+version = "0.0.3"
 description = "A Python package improving /llms.txt format via iterative summarization."
 readme = "README.md"
 requires-python = ">=3.12"
