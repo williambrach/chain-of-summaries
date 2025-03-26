@@ -1,5 +1,5 @@
 [project]
-name = "llms-txt-index"
+name = "chain-of-summaries"
 version = "0.0.1"
 description = "Add your description here"
 readme = "README.md"
