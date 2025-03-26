@@ -1,8 +1,6 @@
 import dspy
-import httpx
 import pandas as pd
 from litellm import completion
-from llms_txt import core
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -15,41 +13,6 @@ from src.metrics import (
 )
 from src.qna import QnA, extract_qa_pairs, synthetic_qa_prompt
 from src.summary import RefineSummary, Summarize, enc
-
-
-def load_llms_txt_file(content: str) -> dict:
-    """
-    Parse LLMs text file content and extract structured information.
-    """
-    try:
-        # Check if content is a URL and fetch if needed
-        if isinstance(content, str) and content.startswith("http"):
-            response = httpx.get("https://llmstxt.org/llms.txt")
-            if response.status_code == 200:
-                content = response.text
-            else:
-                return {
-                    "error": f"Failed to fetch content: HTTP {response.status_code}"
-                }
-        # Parse the content
-        parsed_data = core.parse_llms_file(content)
-        sites = [
-            {
-                "file_name": site["title"],
-                "url": site["url"],
-                "summary": site["desc"],
-                "content": None,
-            }
-            for site in parsed_data["sections"]["Docs"]
-        ]
-        return {
-            "title": parsed_data["title"],
-            "sites": sites,
-            "info": parsed_data["info"],
-            "summary": parsed_data["summary"],
-        }
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def build_llms_txt_file(
