@@ -1,6 +1,6 @@
 # Chain-of-Summaries
 
-[![PyPI version](https://badge.fury.io/py/index-llm.svg)](https://badge.fury.io/py/index-llm)
+[![PyPI version](https://badge.fury.io/py/chain-of-summaries.svg)](https://badge.fury.io/py/chain-of-summaries)
 
 > A Python package improving /llms.txt format via iterative summarization.
 

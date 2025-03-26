@@ -79,11 +79,8 @@ def synthetic_qa_prompt(
 
 
 def extract_qa_pairs(response : str, file_name : str = None) -> list:
-    try:
-        questions = [q.strip() for q in re.findall(r"Q:(.*?)$", response, re.MULTILINE)]
-        answers = [q.strip() for q in re.findall(r"A:(.*?)$", response, re.MULTILINE)]
-    except: 
-        print(file_name)
+    questions = [q.strip() for q in re.findall(r"Q:(.*?)$", response, re.MULTILINE)]
+    answers = [q.strip() for q in re.findall(r"A:(.*?)$", response, re.MULTILINE)]
     qa_pairs = []
     for q, a in zip(questions, answers):
         r = {"question": q, "answer": a}
