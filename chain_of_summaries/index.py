@@ -1,8 +1,13 @@
 import dspy
 import pandas as pd
+import torch
 from litellm import completion
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    PegasusForConditionalGeneration,
+    PegasusTokenizer,
+    pipeline,
+)
 
 from src.chain_of_summaries.metrics import (
     calculate_bert_score,
@@ -96,13 +101,7 @@ class LLMSProcessor:
         self.cache = kwargs.get("cache", True)
         self.num_threads = kwargs.get("num_threads", 20)
         self.display_progress = kwargs.get("display_progress", True)
-
-        self.checkpoint = kwargs.get("suprisal_model", "HuggingFaceTB/SmolLM2-135M")
         self.device = kwargs.get("device", "cpu")
-        self.suprisal_tokenizer = AutoTokenizer.from_pretrained(self.checkpoint)
-        self.suprisal_model = AutoModelForCausalLM.from_pretrained(self.checkpoint).to(
-            self.device
-        )
 
     def __repr__(self) -> str:
         """Return a string representation of the processor."""
@@ -146,9 +145,7 @@ class LLMSProcessor:
         title: str,
         sites: list[dict],
         summary_model: str = None,
-        iteration: int = 0, # TODO maybe remove as param?
-        bert_score: bool = True,
-        suprisal_score: bool = True,
+        iteration: int = 0,  # TODO maybe remove as param?
     ) -> list[dict]:
         """
         Generate text data with summaries and optional scoring metrics.
@@ -162,23 +159,52 @@ class LLMSProcessor:
         Returns:
             Dictionary containing the title and processed site data with summaries and metrics
         """
-
+        # Determine which model to use
         if summary_model is None:
             summary_model = self.model
-        elif "brio" in summary_model:
-            # https://github.com/yixinL7/BRIO?tab=readme-ov-file#how-to-run
-            raise NotImplementedError("BRIO is not yet supported.")
-        elif "pegasus" == summary_model:
-            # https://huggingface.co/docs/transformers/model_doc/pegasus
-            raise NotImplementedError("Pegasus is not yet supported.")
-        elif "bart" == summary_model:
-            # https://huggingface.co/facebook/bart-large-cnn
-            raise NotImplementedError("BART is not yet supported.")
-        else:
-            summary_model = summary_model
+        # Generate summaries based on model type
+        if "pegasus" in summary_model:
+            # Initialize Pegasus model
+            model_name = "google/pegasus-large"
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            tokenizer = PegasusTokenizer.from_pretrained(model_name)
+            model = PegasusForConditionalGeneration.from_pretrained(model_name).to(
+                device
+            )
+            # Generate summaries with Pegasus
+            summaries = []
+            for site in sites:
+                content = site["content"]
+                src_text = [content]
 
-        batch = []
-        if summary_model not in ["brio", "pegasus", "bart"]:
+                batch = tokenizer(
+                    src_text, truncation=True, padding="longest", return_tensors="pt"
+                ).to(device)
+                translated = model.generate(**batch)
+                tgt_text = tokenizer.batch_decode(translated, skip_special_tokens=True)
+
+                summary = {
+                    "summary": tgt_text[0],
+                    "tokens": len(enc.encode(tgt_text[0])),
+                }
+                summaries.append(summary)
+
+        elif "brio" in summary_model:
+            # Initialize BRIO summarizer
+            summarizer = pipeline("summarization", model=summary_model)
+            # Generate summaries with BRIO
+            summaries = []
+            for site in sites:
+                content = site["content"]
+                result = summarizer(content, do_sample=False)
+                summary = {
+                    "summary": result[0]["summary_text"],
+                    "tokens": len(enc.encode(result[0]["summary_text"])),
+                }
+                summaries.append(summary)
+
+        else:
+            batch = []
             for site in sites:
                 site_title = site["file_name"]
                 content = site["content"]
@@ -188,8 +214,6 @@ class LLMSProcessor:
                     ).with_inputs("passage", "id", "iteration")
                 )
             summaries = self._get_summaries(batch)
-        else:
-            summaries = []
 
         # Combine site data with summaries
         processed_sites = []
@@ -200,7 +224,6 @@ class LLMSProcessor:
                 "url": site["url"],
                 "iteration": iteration,
             }
-
             if summaries:
                 site_data.update(
                     {
@@ -213,31 +236,6 @@ class LLMSProcessor:
                 site_data["tokens"] = 0
 
             processed_sites.append(site_data)
-
-        # Calculate BERT scores if requested
-        if bert_score:
-            # TODO mby rewrite to calculate bert summary per site not in batch of all (OOM error)
-
-            summaries_text = [site["summary"] for site in processed_sites]
-            original_content = [
-                prepare_content(site["content"]) for site in processed_sites
-            ]
-            for s_text, o_content, site in zip(summaries_text, original_content, processed_sites):
-                bert_scores = calculate_bert_score([s_text], [o_content])
-                site["bert_score"] = bert_scores['scores']
-
-        # Calculate surprisal scores if requested
-        if suprisal_score:
-            for site in processed_sites:
-                surprisal_results = calculate_surprisal_score(
-                    summary=site["summary"],
-                    model=self.suprisal_model,
-                    tokenizer=self.suprisal_tokenizer,
-                    device=self.device,
-                    verbose=False,
-                )
-                # Update site with all surprisal metrics
-                site.update(surprisal_results)
 
         return {
             "title": title,

@@ -1,6 +1,7 @@
 [project]
 name = "chain-of-summaries"
-version = "0.0.5"
+authors = [{ name = "William Brach", email = "william.brach@stuba.sk" }]
+version = "0.0.6"
 description = "A Python package improving /llms.txt format via iterative summarization."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +22,17 @@ dependencies = [
     "torch>=2.6.0",
     "transformers>=4.48.2",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[project.urls]
+repository = "https://github.com/williambrach/chain-of-summaries"
+
 
 [tool.ruff]
 #https://beta.ruff.rs/docs/rules/

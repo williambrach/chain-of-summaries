@@ -233,8 +233,8 @@ wheels = [
 
 [[package]]
 name = "chain-of-summaries"
-version = "0.0.4"
-source = { virtual = "." }
+version = "0.0.5"
+source = { editable = "." }
 dependencies = [
     { name = "black" },
     { name = "dspy" },

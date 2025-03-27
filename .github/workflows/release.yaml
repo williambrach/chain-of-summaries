@@ -88,6 +88,9 @@ jobs:
         - name: Bump version
           run: uvx --from=toml-cli toml set --toml-path=pyproject.toml project.version ${{ needs.details.outputs.new_version }}
 
+        - name: Install the project
+          run: uv sync --all-extras
+
         - name: Build
           run: uv build
 
