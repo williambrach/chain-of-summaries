@@ -1,5 +1,6 @@
 import dspy
 import pandas as pd
+import tiktoken
 import torch
 from litellm import completion
 from tqdm import tqdm
@@ -9,15 +10,33 @@ from transformers import (
     pipeline,
 )
 
-from src.chain_of_summaries.metrics import (
-    calculate_bert_score,
-    calculate_surprisal_score,
+from chain_of_summaries.metrics import (
     check_answer_em,
     check_answer_f1,
-    prepare_content,
 )
-from src.chain_of_summaries.qna import QnA, extract_qa_pairs, synthetic_qa_prompt
-from src.chain_of_summaries.summary import RefineSummary, Summarize, enc
+from chain_of_summaries.qna import (
+    answer_prompt,
+    extract_qa_pairs,
+    synthetic_qa_prompt,
+)
+from chain_of_summaries.summary import Summarize, enc, refine_summary_prompt
+
+
+def get_token_count(text: str, enc: object = None) -> int:
+    if enc is None:
+        enc = tiktoken.encoding_for_model("gpt-4o-mini")
+    """Get the number of tokens in a string."""
+    return len(enc.encode(text))
+
+
+def truncate_text(text: str, max_tokens: int = 100_000, enc: object = None) -> str:
+    if enc is None:
+        enc = tiktoken.encoding_for_model("gpt-4o-mini")
+    """Truncate a string to a maximum number of tokens."""
+    tokens = enc.encode(text)
+    if len(tokens) > max_tokens:
+        tokens = tokens[:max_tokens]
+    return enc.decode(tokens)
 
 
 def build_llms_txt_file(
@@ -100,8 +119,17 @@ class LLMSProcessor:
         self.kwargs = kwargs
         self.cache = kwargs.get("cache", True)
         self.num_threads = kwargs.get("num_threads", 20)
+        # remove num_threads from kwargs
+        if "num_threads" in kwargs:
+            del kwargs["num_threads"]
         self.display_progress = kwargs.get("display_progress", True)
         self.device = kwargs.get("device", "cpu")
+        try:
+            self.test_completion_call()
+            print(f"LLMSProcessor initialized with model: {self.model}")
+        except Exception as e:
+            print(f"Error initializing LLMSProcessor: {e}")
+            raise
 
     def __repr__(self) -> str:
         """Return a string representation of the processor."""
@@ -113,7 +141,51 @@ class LLMSProcessor:
         response = completion(model=self.model, messages=messages, **self.kwargs)
         return response
 
+    def completion_call(self, messages: list, model: str = None) -> str:
+        if model is None:
+            model = self.model
+        response = completion(model=model, messages=messages, **self.kwargs)
+        return response
+
+    def run_qna(
+        self,
+        question: str,
+        summary: str,
+        model: str,
+        content: str = None,
+        true: str = None,
+        type: str = "summary",
+        file_name: str = None,
+        iteration: int = 0,
+    ) -> str:
+        prompt = answer_prompt(question=question, content=summary, idk=False)
+        try:
+            response = self.completion_call(prompt, model=model)
+            return {
+                "question": question,
+                "summary": summary,
+                "content": content,
+                "true": true,
+                "pred": response.choices[0].message.content,
+                "type": type,
+                "file_name": file_name,
+                "iteration": iteration,
+            }
+        except Exception as e:
+            print(f"Error in QnA: {e}")
+            return {
+                "question": question,
+                "summary": summary,
+                "content": content,
+                "true": true,
+                "pred": "I don't know",
+                "type": type,
+                "file_name": file_name,
+                "iteration": iteration,
+            }
+
     def _get_summaries(self, data: list[dspy.Example]) -> list:
+        # TODO REWRITE IN PLAIN PROMPT
         """
         Generate summaries for the provided data examples.
 
@@ -296,94 +368,118 @@ class LLMSProcessor:
         # Remove duplicates questions and merge answers
         return data
 
-    def evaluate_summaries(self, data: tuple, model: str = None) -> pd.DataFrame:
-        # data -> (site_data, qa_pairs)
-        pass
-
-    def _get_refined_summaries(
-        self,
-        data: list[dspy.Example],
-        model: str,
-        bert_score: bool = False,
-        suprisal_score: bool = False,
+    def evaluate_summaries(
+        self, data: tuple, questions: list[dict], model: str = None, iteration: int = 0
     ) -> pd.DataFrame:
-        program = RefineSummary()
-        program.set_lm(dspy.LM(model, max_tokens=self.max_tokens, **self.kwargs))
+        """
+        Evaluate the summaries using the provided model and questions.
+        """
+        if model is None:
+            model = self.model
+        index = data["sites"] if "sites" in data else data
 
-        output = dspy.Evaluate(
-            devset=data,
-            metric=lambda x, y: True,
-            num_threads=self.num_threads,
-            display_progress=False,
-            return_outputs=True,
-        )(program)
-
-        processed_sites = [dict(output_pair[1]) for output_pair in output[1]]
-
-        # Calculate BERT scores if requested
-        if bert_score:
-            summaries_text = [site["summary"] for site in processed_sites]
-            original_content = [
-                prepare_content(site["content"]) for site in processed_sites
-            ]
-            bert_scores = calculate_bert_score(summaries_text, original_content)
-            # Add scores to respective sites
-            for site, score in zip(processed_sites, bert_scores["scores"]):
-                site["bert_score"] = score
-
-        # Calculate surprisal scores if requested
-        if suprisal_score:
-            for site in processed_sites:
-                surprisal_results = calculate_surprisal_score(
-                    summary=site["summary"],
-                    model=self.suprisal_model,
-                    tokenizer=self.suprisal_tokenizer,
-                    device=self.device,
-                    verbose=False,
-                )
-                # Update site with all surprisal metrics
-                site.update(surprisal_results)
-        return processed_sites
-
-    def eval_questions(
-        self, sites: list, qa_pairs: list, qna: dspy.Module, iteration: int = 0
-    ) -> pd.DataFrame:
         answers = []
-        for i, site in enumerate(sites):
-            for qa in qa_pairs[i]:
-                # Create example directly from the qa dictionary and site data
-                example = dspy.Example(
+        for site, qa_pairs in tqdm(zip(index, questions), total=len(index)):
+            for qa in qa_pairs:
+                response = self.run_qna(
                     question=qa["question"],
                     summary=site["summary"],
                     content=site["content"],
                     true=qa["answer"],
-                    type="summary",
                     file_name=site["file_name"],
                     iteration=iteration,
-                ).with_inputs(
-                    "question",
-                    "true",
-                    "content",
-                    "type",
-                    "file_name",
-                    "summary",
-                    "iteration",
+                    model=model,
                 )
-                answers.append(example)
-        output = dspy.Evaluate(
-            devset=answers,
-            metric=lambda x, y: True,  # noqa: E731
-            num_threads=self.num_threads,
-            display_progress=False,
-            return_outputs=True,
-        )(qna)
-        qa_df = pd.DataFrame([dict(output_pair[1]) for output_pair in output[1]])
-
+                answers.append(response)
+        qa_df = pd.DataFrame(answers)
         qa_df["correct"] = qa_df.apply(check_answer_em, axis=1)
         qa_df["correct_f1"] = qa_df.apply(check_answer_f1, axis=1)
-        # drop content column
-        qa_df.drop(columns=["content"], inplace=True)
+        if "content" in qa_df.columns:
+            qa_df.drop(columns=["content"], inplace=True)
+
         return qa_df
+
+    def _get_refined_summaries(
+        self,
+        data: list[dspy.Example],
+        model: str = None,
+        cod: bool = False,
+    ) -> pd.DataFrame:
+        if model is None:
+            model = self.model
+        index = []
+        for example in tqdm(data, total=len(data), desc="Refining summaries"):
+            example = example.toDict()
+            summary = example["summary"]
+            passage = example["passage"]
+            questions = example["questions"]
+            iteration = example["iteration"]
+            file_name = example["file_name"]
+            q_per_iteration = example["q_per_iteration"]
+            prompt = refine_summary_prompt(
+                passage=passage, existing_summary=summary, questions=questions, cod=cod
+            )
+            response = self.completion_call(prompt, model=model)
+            response = (
+                response.choices[0]
+                .message.content.split("Summary")[-1]
+                .strip(":")
+                .strip("*")
+                .strip()
+            )
+            index.append(
+                {
+                    "summary": response,
+                    "file_name": file_name,
+                    "tokens": len(enc.encode(response)),
+                    "iteration": iteration,
+                    "content": passage,
+                    "questions": questions,
+                    "q_per_iteration": q_per_iteration,
+                    "cod": cod,
+                }
+            )
+        return index
+
+    # def eval_questions(
+    #     self, sites: list, qa_pairs: list, qna: dspy.Module, iteration: int = 0
+    # ) -> pd.DataFrame:
+    #     answers = []
+    #     for i, site in enumerate(sites):
+    #         for qa in qa_pairs[i]:
+    #             # Create example directly from the qa dictionary and site data
+    #             example = dspy.Example(
+    #                 question=qa["question"],
+    #                 summary=site["summary"],
+    #                 content="",
+    #                 true=qa["answer"],
+    #                 type="summary",
+    #                 file_name=site["file_name"],
+    #                 iteration=iteration,
+    #             ).with_inputs(
+    #                 "question",
+    #                 "true",
+    #                 "content",
+    #                 "type",
+    #                 "file_name",
+    #                 "summary",
+    #                 "iteration",
+    #             )
+    #             answers.append(example)
+    #     output = dspy.Evaluate(
+    #         devset=answers,
+    #         metric=lambda x, y: True,  # noqa: E731
+    #         num_threads=self.num_threads,
+    #         display_progress=True,
+    #         return_outputs=True,
+    #     )(qna)
+    #     qa_df = pd.DataFrame([dict(output_pair[1]) for output_pair in output[1]])
+    #     qa_df["correct"] = qa_df.apply(check_answer_em, axis=1)
+    #     qa_df["correct_f1"] = qa_df.apply(check_answer_f1, axis=1)
+    #     # drop content column
+    #     if "content" in qa_df.columns:
+    #         qa_df.drop(columns=["content"], inplace=True)
+    #     return qa_df
 
     def improve_llms_txt(
         self,
@@ -392,6 +488,8 @@ class LLMSProcessor:
         eval_questions: list[dict] = None,
         model: str = None,
         iterations: int = 10,
+        iteration_questions: int = 5,
+        cod: bool = False,
     ) -> dict:
         """
         Updates the provided llms.txt with iterative summarization.
@@ -405,11 +503,14 @@ class LLMSProcessor:
         index_iterations = [0] * (iterations + 1)
         index_iterations[0] = data["sites"]
 
-        qna = QnA()
-        qna.set_lm(dspy.LM(model, max_tokens=self.max_tokens, **self.kwargs))
-
-        train_qa_df = self.eval_questions(index_iterations[0], train_questions, qna)
-        eval_qa_df = self.eval_questions(index_iterations[0], eval_questions, qna)
+        print("Evaluation of initial train data")
+        train_qa_df = self.evaluate_summaries(
+            index_iterations[0], train_questions, model=model
+        )
+        print("Evaluation of initial eval data")
+        eval_qa_df = self.evaluate_summaries(
+            index_iterations[0], eval_questions, model=model
+        )
 
         for iteration in tqdm(range(1, iterations + 1)):
             to_be_refined = []
@@ -422,15 +523,14 @@ class LLMSProcessor:
                     (train_qa_df["file_name"] == file_name)
                     & (train_qa_df["correct"] == 0)
                     & (train_qa_df["iteration"] == iteration - 1)
-                    # & (train_qa_df["correct_f1"] > 0.5)
                 ].copy()
 
                 # for site build a dspy refiner prompt with X sample selected questions
-                sample_size = min(5, len(unanswered))  # TODO rewrite as hyperparam
+                sample_size = min(iteration_questions, len(unanswered))
                 unanswered_questions = (
                     []
                     if unanswered.empty
-                    else unanswered["question"].sample(sample_size)
+                    else unanswered["question"].sample(sample_size).tolist()
                 )
                 to_be_refined.append(
                     dspy.Example(
@@ -439,17 +539,21 @@ class LLMSProcessor:
                         questions=unanswered_questions,
                         iteration=iteration,
                         file_name=file_name,
+                        q_per_iteration=len(unanswered_questions),
                     ).with_inputs(
                         "summary", "passage", "questions", "iteration", "file_name"
                     )
                 )
             index_iterations[iteration] = self._get_refined_summaries(
-                to_be_refined, model
+                to_be_refined, model, cod=cod
             )
             # train eval
             # --------------------------------
-            iteration_train_qa_df = self.eval_questions(
-                index_iterations[iteration], train_questions, qna, iteration=iteration
+            iteration_train_qa_df = self.evaluate_summaries(
+                index_iterations[iteration],
+                train_questions,
+                model=model,
+                iteration=iteration,
             )
             train_qa_df = pd.concat(
                 [train_qa_df, iteration_train_qa_df], ignore_index=True
@@ -458,8 +562,11 @@ class LLMSProcessor:
             training_loss_f1 = iteration_train_qa_df["correct_f1"].mean()
             # eval eval
             # --------------------------------
-            iteration_eval_qa_df = self.eval_questions(
-                index_iterations[iteration], eval_questions, qna, iteration=iteration
+            iteration_eval_qa_df = self.evaluate_summaries(
+                index_iterations[iteration],
+                eval_questions,
+                model=model,
+                iteration=iteration,
             )
             eval_qa_df = pd.concat(
                 [eval_qa_df, iteration_eval_qa_df], ignore_index=True

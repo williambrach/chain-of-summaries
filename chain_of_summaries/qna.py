@@ -1,44 +1,69 @@
 import re
 
-import dspy
+# class QnASignature(dspy.Signature):
+#     """
+#     Given a question and content answer question simple as possible.
+#     Answers are mostly words and phrases. Don't asnwer as full sentences.
+#     """
+
+#     question = dspy.InputField(desc="a question to answer")
+#     content = dspy.InputField(desc="content that contains the answer")
+#     answer: str = dspy.OutputField(desc="answer for question")
 
 
-class QnASignature(dspy.Signature):
+# class QnA(dspy.Module):
+#     def __init__(self) -> None:
+#         self.answer = dspy.ChainOfThought(QnASignature)
+
+#     def forward(
+#         self,
+#         question: str,
+#         summary: str,
+#         content: str,
+#         true: str = None,
+#         type: str = None,
+#         file_name: str = None,
+#         iteration: int = 0,
+#     ) -> dspy.Example:
+#         response = self.answer(question=question, content=summary)
+#         return dspy.Example(
+#             question=question,
+#             summary=summary,
+#             content=content,
+#             true=true,
+#             pred=response.answer,
+#             type=type,
+#             file_name=file_name,
+#             iteration=iteration,
+#         )
+
+
+def answer_prompt(question: str, content: str, idk: bool = False) -> str:
     """
-    Given a question and content answer question simple as possible.
-    Answers are mostly words and phrases. Don't asnwer as full sentences.
+    Generate a prompt for answering a question based on the provided content.
     """
+    if idk:
+        idk = "If the answer is not present in the content, say \"I don't know."
+    else:
+        idk = ""
+    return [
+        {
+            "content": f"""
+    Given a question and content, answer question as simple as possible!
+    Don't answer as full sentences, words and phrases are sufficient.
+    Answer the question based on the content provided.
+    {idk}
+    """.strip(),
+            "role": "system",
+        },
+        {"content": f"""Content: {content}""", "role": "system"},
+        {
+            "content": f"""Question: {question}
+            Answer:""",
+            "role": "user",
+        },
+    ]
 
-    question = dspy.InputField(desc="a question to answer")
-    content = dspy.InputField(desc="content that contains the answer")
-    answer: str = dspy.OutputField(desc="answer for question")
-
-
-class QnA(dspy.Module):
-    def __init__(self) -> None:
-        self.answer = dspy.ChainOfThought(QnASignature)
-
-    def forward(
-        self,
-        question: str,
-        summary : str,
-        content: str,
-        true: str = None,
-        type: str = None,
-        file_name: str = None,
-        iteration: int = 0,
-    ) -> dspy.Example:
-        response = self.answer(question=question, content=summary)
-        return dspy.Example(
-            question=question,
-            summary=summary,
-            content=content,
-            true=true,
-            pred=response.answer,
-            type=type,
-            file_name=file_name,
-            iteration=iteration,
-        )
 
 def synthetic_qa_prompt(
     passage: str,
@@ -50,7 +75,9 @@ def synthetic_qa_prompt(
     Reference: https://github.com/Azure/synthetic-qa-generation
     """
     # Create system message with context
-    messages = [{"content": f"Here is content of the file:\n\n{passage}", "role": "system"}]
+    messages = [
+        {"content": f"Here is content of the file:\n\n{passage}", "role": "system"}
+    ]
 
     # Add constraint for existing questions if provided
     # Add main instruction message
@@ -78,7 +105,7 @@ def synthetic_qa_prompt(
     return messages
 
 
-def extract_qa_pairs(response : str, file_name : str = None) -> list:
+def extract_qa_pairs(response: str, file_name: str = None) -> list:
     questions = [q.strip() for q in re.findall(r"Q:(.*?)$", response, re.MULTILINE)]
     answers = [q.strip() for q in re.findall(r"A:(.*?)$", response, re.MULTILINE)]
     qa_pairs = []

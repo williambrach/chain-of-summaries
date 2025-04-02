@@ -41,66 +41,136 @@ class Summarize(dspy.Module):
         )
 
 
-class RefineSummarySignature(dspy.Signature):
-    """Refine an existing text summary to address specific user questions.
+def refine_summary_prompt(
+    passage: str, existing_summary: str, questions: list[str], cod: bool = False
+) -> list[dict]:
+    if isinstance(questions, list):
+        formatted_questions = "\n".join([f"- {q}" for q in questions])
+    else:
+        formatted_questions = questions
 
-    Take a summary and user questions as input, then generates a focused
-    version that answers those questions while preserving information that is already in summary.
+    if cod:
+        restraint = "Try to keep summary short and keep a minimum draft for each sentence in summary, with 5 words at most."
+    else:
+        restraint = "Try to keep the summary short and concise."
 
-    Key requirements:
-    - Include information that directly answers the user's questions
-    - Preserve relevant key points from the original summary
-    - Return the original summary unchanged if it already contains all necessary information
-    - Return the original summary if the questions are not relevant to the text
+    return [
+        {
+            "content": """
+            You are an expert text summarizer. Your task is to refine an existing summary to address specific user questions.
+            Rules:
+            - Include information that directly answers the user's questions
+            - Preserve relevant key points from the original summary
+            - Return the original summary unchanged if it already contains all necessary information
+            - Return the original summary if the questions are not relevant to the text
+            - Keep the summary short and concise
+            - Don't include questions in the summary.
+            - Everytime start with : "Updated Summary:"
+            """.strip(),
+            "role": "system",
+        },
+        {"content": f"""Knowledge Base Passage: {passage}""", "role": "system"},
+        {"content": f"""Existing Summary: {existing_summary}""", "role": "user"},
+        {
+            "content": f"""Questions to Address: {formatted_questions}
+            Provide an updated summary addressing the questions while maintaining the informational content of the original summary. {restraint}.
+            """,
+            "role": "user",
+        },
+    ]
 
-    """
 
-    passage: str = dspy.InputField(
-        desc="The knowledge base passage that the summary is based on"
-    )
+# class RefineSummarySignature(dspy.Signature):
+#     """Refine an existing text summary to address specific user questions.
 
-    existing_summary: str = dspy.InputField(
-        desc="The current summary that needs to be refined"
-    )
+#     Take a summary and user questions as input, then generates a focused
+#     version that answers those questions while preserving information that is already in summary.
 
-    questions: list[str] = dspy.InputField(
-        desc="Frequantly asked questions that the summary should address"
-    )
+#     Key requirements:
+#     - Include information that directly answers the user's questions
+#     - Preserve relevant key points from the original summary
+#     - Return the original summary unchanged if it already contains all necessary information
+#     - Return the original summary if the questions are not relevant to the text
 
-    summary = dspy.OutputField(
-        desc="Updated summary addressing the questions while maintaining the also informational content of the original summary. Try to keep summary short and concise."
-    )
+#     """
+
+#     passage: str = dspy.InputField(
+#         desc="The knowledge base passage that the summary is based on"
+#     )
+
+#     existing_summary: str = dspy.InputField(
+#         desc="The current summary that needs to be refined"
+#     )
+
+#     questions: list[str] = dspy.InputField(
+#         desc="Frequantly asked questions that the summary should address"
+#     )
+
+#     summary = dspy.OutputField(
+#         desc="Updated summary addressing the questions while maintaining the also informational content of the original summary. Try to keep summary short and concise."
+#     )
+
+# class RefineSummarySignatureCoD(dspy.Signature):
+#     """Refine an existing text summary to address specific user questions.
+
+#     Take a summary and user questions as input, then generates a focused
+#     version that answers those questions while preserving information that is already in summary.
+
+#     Key requirements:
+#     - Include information that directly answers the user's questions
+#     - Preserve relevant key points from the original summary
+#     - Return the original summary unchanged if it already contains all necessary information
+#     - Return the origianl summary if you can't find the answer to the question
+#     - Return the original summary if the questions are not relevant to the text
+
+#     """
+
+#     passage: str = dspy.InputField(
+#         desc="The knowledge base passage that the summary is based on"
+#     )
+
+#     existing_summary: str = dspy.InputField(
+#         desc="The current summary that needs to be refined"
+#     )
+
+#     questions: list[str] = dspy.InputField(
+#         desc="Frequantly asked questions that the summary should address"
+#     )
+
+#     summary = dspy.OutputField(
+#         desc="Updated summary addressing the questions while maintaining the also informational content of the original summary. Try to keep summary short and keep a minimum draft for each sentence in summary, with 5 words at most."
+#     )
 
 
-class RefineSummary(dspy.Module):
-    def __init__(self) -> None:
-        self.summarize = dspy.ChainOfThought(RefineSummarySignature)
+# class RefineSummary(dspy.Module):
+#     def __init__(self) -> None:
+#         self.summarize = dspy.ChainOfThought(RefineSummarySignature)
 
-    def forward(
-        self,
-        summary: str,
-        passage: str,
-        questions: list,
-        iteration: int,
-        file_name: str,
-    ) -> dspy.Example:
-        if len(questions) == 0:
-            return dspy.Example(
-                summary=summary,
-                file_name=file_name,
-                tokens=len(enc.encode(summary)),
-                iteration=iteration,
-                content=passage,
-                questions=[],
-            )
-        generated = self.summarize(
-            passage=passage, questions=questions, existing_summary=summary
-        )
-        return dspy.Example(
-            summary=generated.summary,
-            file_name=file_name,
-            content=passage,
-            tokens=len(enc.encode(generated.summary)),
-            iteration=iteration,
-            questions=questions,
-        )
+#     def forward(
+#         self,
+#         summary: str,
+#         passage: str,
+#         questions: list,
+#         iteration: int,
+#         file_name: str,
+#     ) -> dspy.Example:
+#         if len(questions) == 0:
+#             return dspy.Example(
+#                 summary=summary,
+#                 file_name=file_name,
+#                 tokens=len(enc.encode(summary)),
+#                 iteration=iteration,
+#                 content=passage,
+#                 questions=[],
+#             )
+#         generated = self.summarize(
+#             passage=passage, questions=questions, existing_summary=summary
+#         )
+#         return dspy.Example(
+#             summary=generated.summary,
+#             file_name=file_name,
+#             content=passage,
+#             tokens=len(enc.encode(generated.summary)),
+#             iteration=iteration,
+#             questions=questions,
+#         )
