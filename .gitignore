@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 *.DS_Store*
 .env
-data/trivia_qa/*.json
+data/trivia_qa/
 index/
 run.ipynb
 # C extensions

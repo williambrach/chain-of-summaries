@@ -12,6 +12,7 @@ def prepare_content(content: str) -> str:
     sentences = [s for s in sentences if len(s) > 15]
     return sentences
 
+
 def calculate_bert_score(pred: list[str], true: list[str] | list[list[str]]) -> dict:
     "TODO rewrite as local function not as a microservice"
     if pred is None:
@@ -104,6 +105,7 @@ def calculate_surprisal_score(
 Extended from the evaluation script for v1.1 of the SQuAD dataset. """
 # https://github.com/mandarjoshi90/triviaqa/blob/master/evaluation/triviaqa_evaluation.py
 
+
 def normalize_answer(s: str) -> str:
     """Lower text and remove punctuation, articles and extra whitespace."""
 
@@ -179,7 +181,6 @@ def check_answer_em(row: pd.Series) -> bool:
         return e["exact_match"]
     except Exception as e:
         return False
-
 
 
 def check_answer_f1(row: pd.Series) -> float:

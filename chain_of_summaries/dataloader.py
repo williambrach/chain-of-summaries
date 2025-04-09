@@ -5,7 +5,7 @@ def order_data(
     data: dict,
     synthetic_questions: list,
     train_questions: list,
-    validation_questions: list
+    validation_questions: list,
 ) -> dict:
     file_names = [tq["file_name"] for tq in data["sites"]]
     file_names = set(file_names)
@@ -63,7 +63,6 @@ def order_data(
         else:
             ordered_synthetic_questions.append([])  # Empty list if no train questions
 
-
         # Add train questions
         if file_name in train_questions_by_file:
             ordered_train_questions.append(train_questions_by_file[file_name])
@@ -83,11 +82,9 @@ def order_data(
     synthetic_questions = ordered_synthetic_questions
     return data, synthetic_questions, train_questions, validation_questions
 
+
 def load_raw_data(
-        initial :str,
-        synthetic :str,
-        train :str,
-        validation : str = "trivia_qa_validation"
+    initial: str, synthetic: str, train: str, validation: str = "trivia_qa_validation"
 ) -> tuple:
     with open(initial) as f:
         data = json.load(f)
@@ -105,4 +102,3 @@ def load_raw_data(
     with open(validation) as f:
         eval_questions_raw = json.load(f)
     return data, synthetic_questions_raw, train_questions_raw, eval_questions_raw
-

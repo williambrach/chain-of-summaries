@@ -1,8 +1,10 @@
+import time
+
 import dspy
 import pandas as pd
 import tiktoken
 import torch
-from litellm import completion
+from litellm import batch_completion, completion
 from tqdm import tqdm
 from transformers import (
     PegasusForConditionalGeneration,
@@ -111,6 +113,7 @@ class LLMSProcessor:
         model: str,
         temperature: float = 0.0,
         max_tokens: int = 2056,
+        batch_size: int = 1,
         **kwargs,
     ) -> None:
         self.model = model
@@ -119,9 +122,11 @@ class LLMSProcessor:
         self.kwargs = kwargs
         self.cache = kwargs.get("cache", True)
         self.num_threads = kwargs.get("num_threads", 20)
-        # remove num_threads from kwargs
+        self.batch_size = batch_size
         if "num_threads" in kwargs:
             del kwargs["num_threads"]
+        if "cache" in kwargs:
+            del kwargs["cache"]
         self.display_progress = kwargs.get("display_progress", True)
         self.device = kwargs.get("device", "cpu")
         try:
@@ -144,8 +149,47 @@ class LLMSProcessor:
     def completion_call(self, messages: list, model: str = None) -> str:
         if model is None:
             model = self.model
-        response = completion(model=model, messages=messages, **self.kwargs)
+        response = completion(
+            model=model,
+            messages=messages,
+            temperature=0,
+            **self.kwargs,
+        )
         return response
+
+    def batch_completion_call(self, messages: list, model: str = None) -> str:
+        batch_size = self.batch_size
+        if model is None:
+            model = self.model
+        # Split messages into batches
+        batches = [
+            messages[i : i + batch_size] for i in range(0, len(messages), batch_size)
+        ]
+        responses = []
+        for batch in tqdm(batches, total=len(batches)):
+            response = batch_completion(
+                model=model,
+                messages=batch,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                **self.kwargs,
+            )
+            # check if rate limit
+            try:
+                _ = response[0].choices[0].message.content
+            except Exception as e:
+                print(f"Error in batch completion: {e}")
+                sleep_time = 60
+                time.sleep(sleep_time)
+                response = batch_completion(
+                    model=model,
+                    messages=batch,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    **self.kwargs,
+                )
+            responses.extend(response)
+        return responses
 
     def run_qna(
         self,
@@ -379,18 +423,59 @@ class LLMSProcessor:
         index = data["sites"] if "sites" in data else data
 
         answers = []
-        for site, qa_pairs in tqdm(zip(index, questions), total=len(index)):
-            for qa in qa_pairs:
-                response = self.run_qna(
-                    question=qa["question"],
-                    summary=site["summary"],
-                    content=site["content"],
-                    true=qa["answer"],
-                    file_name=site["file_name"],
-                    iteration=iteration,
-                    model=model,
+        if self.batch_size == 1:
+            for site, qa_pairs in tqdm(zip(index, questions), total=len(index)):
+                for qa in qa_pairs:
+                    response = self.run_qna(
+                        question=qa["question"],
+                        summary=site["summary"],
+                        content=site["content"],
+                        true=qa["answer"],
+                        file_name=site["file_name"],
+                        iteration=iteration,
+                        model=model,
+                    )
+                    answers.append(response)
+        else:
+            input_data = [
+                {
+                    "question": qa["question"],
+                    "summary": site["summary"],
+                    "content": site["content"],
+                    "true": qa["answer"],
+                    "file_name": site["file_name"],
+                    "iteration": iteration,
+                    "model": model,
+                }
+                for site, qa_pairs in zip(index, questions)
+                for qa in qa_pairs
+            ]
+
+            # Create all messages at once
+            messages = [
+                answer_prompt(
+                    question=input["question"], content=input["summary"], idk=False
                 )
-                answers.append(response)
+                for input in input_data
+            ]
+
+            # Make the batch call
+            results = self.batch_completion_call(messages, model=model)
+
+            # Create and return answers
+            answers = [
+                {
+                    "question": input_item["question"],
+                    "summary": input_item["summary"],
+                    "content": input_item["content"],
+                    "true": input_item["true"],
+                    "pred": response.choices[0].message.content,
+                    "type": "summary",
+                    "file_name": input_item["file_name"],
+                    "iteration": input_item["iteration"],
+                }
+                for response, input_item in zip(results, input_data)
+            ]
         qa_df = pd.DataFrame(answers)
         qa_df["correct"] = qa_df.apply(check_answer_em, axis=1)
         qa_df["correct_f1"] = qa_df.apply(check_answer_f1, axis=1)
@@ -408,37 +493,79 @@ class LLMSProcessor:
         if model is None:
             model = self.model
         index = []
-        for example in tqdm(data, total=len(data), desc="Refining summaries"):
-            example = example.toDict()
-            summary = example["summary"]
-            passage = example["passage"]
-            questions = example["questions"]
-            iteration = example["iteration"]
-            file_name = example["file_name"]
-            q_per_iteration = example["q_per_iteration"]
-            prompt = refine_summary_prompt(
-                passage=passage, existing_summary=summary, questions=questions, cod=cod
-            )
-            response = self.completion_call(prompt, model=model)
-            response = (
-                response.choices[0]
-                .message.content.split("Summary")[-1]
-                .strip(":")
-                .strip("*")
-                .strip()
-            )
-            index.append(
-                {
-                    "summary": response,
-                    "file_name": file_name,
-                    "tokens": len(enc.encode(response)),
-                    "iteration": iteration,
-                    "content": passage,
-                    "questions": questions,
-                    "q_per_iteration": q_per_iteration,
-                    "cod": cod,
-                }
-            )
+        if self.batch_size == 1:
+            for example in tqdm(data, total=len(data), desc="Refining summaries"):
+                example = example.toDict()
+                summary = example["summary"]
+                passage = example["passage"]
+                questions = example["questions"]
+                iteration = example["iteration"]
+                file_name = example["file_name"]
+                q_per_iteration = example["q_per_iteration"]
+                prompt = refine_summary_prompt(
+                    passage=passage,
+                    existing_summary=summary,
+                    questions=questions,
+                    cod=cod,
+                )
+                response = self.completion_call(prompt, model=model)
+                response = (
+                    response.choices[0]
+                    .message.content.split("Summary")[-1]
+                    .strip(":")
+                    .strip("*")
+                    .strip()
+                )
+                index.append(
+                    {
+                        "summary": response,
+                        "file_name": file_name,
+                        "tokens": len(enc.encode(response)),
+                        "iteration": iteration,
+                        "content": passage,
+                        "questions": questions,
+                        "q_per_iteration": q_per_iteration,
+                        "cod": cod,
+                    }
+                )
+        else:
+            batch_size = self.batch_size
+            for i in range(0, len(data), batch_size):
+                batch = data[i : i + batch_size]
+                prompts = []
+                batch_data = []
+                for example in batch:
+                    example = example.toDict()
+                    summary = example["summary"]
+                    passage = example["passage"]
+                    questions = example["questions"]
+                    iteration = example["iteration"]
+                    file_name = example["file_name"]
+                    q_per_iteration = example["q_per_iteration"]
+                    prompt = refine_summary_prompt(
+                        passage=passage,
+                        existing_summary=summary,
+                        questions=questions,
+                        cod=cod,
+                    )
+                    prompts.append(prompt)
+                    batch_data.append(example)
+                responses = self.batch_completion_call(prompts, model=model)
+                for response, example in zip(responses, batch_data):
+                    content = response.choices[0].message.content
+                    summary = content.split("Summary")[-1].strip(":").strip("*").strip()
+                    index.append(
+                        {
+                            "summary": summary,
+                            "file_name": example["file_name"],
+                            "tokens": len(enc.encode(summary)),
+                            "iteration": example["iteration"],
+                            "content": example["passage"],
+                            "questions": example["questions"],
+                            "q_per_iteration": example["q_per_iteration"],
+                            "cod": cod,
+                        }
+                    )
         return index
 
     # def eval_questions(
