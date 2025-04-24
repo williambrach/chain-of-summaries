@@ -7,6 +7,11 @@ __pycache__/
 data/trivia_qa/
 index/
 run.ipynb
+eval_data_old.ipynb
+eval_data.ipynb
+iterate.py
+sweep.sh
+**/bert/
 # C extensions
 *.so
 *test.ipynb
