@@ -22,7 +22,8 @@ from chain_of_summaries.qna import (
     synthetic_qa_prompt,
 )
 from chain_of_summaries.summary import Summarize, enc, refine_summary_prompt
-
+from transformers import BartTokenizer, PegasusTokenizer
+from transformers import BartForConditionalGeneration, PegasusForConditionalGeneration
 
 def get_token_count(text: str, enc: object = None) -> int:
     if enc is None:
@@ -216,6 +217,7 @@ class LLMSProcessor:
                 "iteration": iteration,
             }
         except Exception as e:
+            print(prompt)
             print(f"Error in QnA: {e}")
             return {
                 "question": question,
@@ -281,15 +283,16 @@ class LLMSProcessor:
         # Generate summaries based on model type
         if "pegasus" in summary_model:
             # Initialize Pegasus model
+            print("Using Pegasus for summarization...")
             model_name = "google/pegasus-large"
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = "cuda:1" if torch.cuda.is_available() else "cpu"
             tokenizer = PegasusTokenizer.from_pretrained(model_name)
             model = PegasusForConditionalGeneration.from_pretrained(model_name).to(
                 device
             )
             # Generate summaries with Pegasus
             summaries = []
-            for site in sites:
+            for site in tqdm(sites):
                 content = site["content"]
                 src_text = [content]
 
@@ -307,15 +310,21 @@ class LLMSProcessor:
 
         elif "brio" in summary_model:
             # Initialize BRIO summarizer
-            summarizer = pipeline("summarization", model=summary_model)
-            # Generate summaries with BRIO
+            print("Using Brio for summarization...")
+            
+            model = BartForConditionalGeneration.from_pretrained('Yale-LILY/brio-cnndm-uncased')
+            tokenizer = BartTokenizer.from_pretrained('Yale-LILY/brio-cnndm-uncased')
+            max_length = 1024
             summaries = []
-            for site in sites:
+            for site in tqdm(sites):
                 content = site["content"]
-                result = summarizer(content, do_sample=False)
+                article = sites[0]['content']
+                inputs = tokenizer([article], max_length=max_length, return_tensors="pt", truncation=True)
+                summary_ids = model.generate(inputs["input_ids"])
+                result= tokenizer.batch_decode(summary_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
                 summary = {
-                    "summary": result[0]["summary_text"],
-                    "tokens": len(enc.encode(result[0]["summary_text"])),
+                    "summary":result,
+                    "tokens": len(enc.encode(result)),
                 }
                 summaries.append(summary)
 
