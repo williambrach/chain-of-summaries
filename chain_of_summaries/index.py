@@ -463,19 +463,25 @@ class LLMSProcessor:
             results = self.batch_completion_call(messages, model=model)
 
             # Create and return answers
-            answers = [
-                {
-                    "question": input_item["question"],
-                    "summary": input_item["summary"],
-                    "content": input_item["content"],
-                    "true": input_item["true"],
-                    "pred": response.choices[0].message.content,
-                    "type": "summary",
-                    "file_name": input_item["file_name"],
-                    "iteration": input_item["iteration"],
-                }
-                for response, input_item in zip(results, input_data)
-            ]
+            answers = []
+            for response, input_item in zip(results, input_data):
+                try:
+                    pred = response.choices[0].message.content
+                except:  # noqa: E722
+                    print(response)
+                    pred = ""
+                answers.append(
+                    {
+                        "question": input_item["question"],
+                        "summary": input_item["summary"],
+                        "content": input_item["content"],
+                        "true": input_item["true"],
+                        "pred": pred,
+                        "type": "summary",
+                        "file_name": input_item["file_name"],
+                        "iteration": input_item["iteration"],
+                    } 
+                )
         qa_df = pd.DataFrame(answers)
         qa_df["correct"] = qa_df.apply(check_answer_em, axis=1)
         qa_df["correct_f1"] = qa_df.apply(check_answer_f1, axis=1)
