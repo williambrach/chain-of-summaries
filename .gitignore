@@ -5,6 +5,8 @@ __pycache__/
 *.DS_Store*
 .env
 data/trivia_qa/
+data/truthful_qa/
+data/squad/
 index/
 run.ipynb
 eval_data_old.ipynb

@@ -654,6 +654,14 @@ class LLMSProcessor:
             index_iterations[0], eval_questions, model=model
         )
 
+        training_loss = train_qa_df["correct"].mean()
+        training_loss_f1 = train_qa_df["correct_f1"].mean()
+
+        eval_loss = eval_qa_df["correct"].mean()
+        eval_loss_f1 = eval_qa_df["correct_f1"].mean()
+
+        print(f"Iteration 0: Train Loss = {training_loss:.4f}, Train F1 = {training_loss_f1:.4f}, Eval Loss = {eval_loss:.4f}, Eval F1 = {eval_loss_f1:.4f}")
+
         for iteration in tqdm(range(1, iterations + 1)):
             to_be_refined = []
             last_iteration = index_iterations[iteration - 1]
